@@ -11,7 +11,7 @@ RESOURCES_LIVER_REALSENSE_DIR = os.path.join(RESOURCES_DIR, 'liverRealSense')
 SCALE = 1000
 DEFAULT_SCALE = 100
 # Width, Height
-MASK_SIZE = (600, 600, 3)
+MASK_SIZE = (400, 400, 3)
 
 
 def nothing(x):
@@ -45,7 +45,7 @@ def read(bag_filename):
     # cv2.createTrackbar('alpha', 'RealSense', 1, 100, nothing)
     # cv2.setTrackbarPos('alpha', 'RealSense', DEFAULT_SCALE)
 
-    # circle_finder_map_img = None
+    circle_finder_map_img = None
     circle_finder_img = None
     prev_circle = None
 
@@ -154,6 +154,8 @@ def read(bag_filename):
 
                         mask[y][x] = resized_color_image[py][px]
 
+                cv2.line(mask, (0, int(MASK_SIZE[1] / 2)), (MASK_SIZE[0], int(MASK_SIZE[1] / 2)), (0, 255, 0), 1)
+                cv2.line(mask, (int(MASK_SIZE[0] / 2), 0), (int(MASK_SIZE[0] / 2), MASK_SIZE[1]), (0, 255, 0), 1)
                 cv2.imshow("crop", mask)
 
         # #
@@ -174,5 +176,5 @@ def read(bag_filename):
 
 
 if __name__ == '__main__':
-    bag_file = os.path.join(RESOURCES_LIVER_REALSENSE_DIR, '20210924_101338.bag')
+    bag_file = os.path.join(RESOURCES_LIVER_REALSENSE_DIR, '20210924_095222.bag')
     read(bag_file)
