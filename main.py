@@ -1,3 +1,4 @@
+import math
 import os
 
 import cv2
@@ -8,6 +9,9 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESOURCES_DIR = os.path.join(ROOT_DIR, 'resources')
 RESOURCES_LIVER_REALSENSE_DIR = os.path.join(RESOURCES_DIR, 'liverRealSense')
 SCALE = 1000
+DEFAULT_SCALE = 100
+# Width, Height
+MASK_SIZE = (600, 600, 3)
 
 
 def nothing(x):
@@ -36,18 +40,19 @@ def read(bag_filename):
     # 創建著色氣物件
     _ = rs.colorizer()
 
-    # 創建視窗
+    # # 創建視窗
     cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-    cv2.createTrackbar('alpha', 'RealSense', 1, 100, nothing)
-    cv2.setTrackbarPos('alpha', 'RealSense', 100)
+    # cv2.createTrackbar('alpha', 'RealSense', 1, 100, nothing)
+    # cv2.setTrackbarPos('alpha', 'RealSense', DEFAULT_SCALE)
 
-    circle_finder_map_img = None
+    # circle_finder_map_img = None
     circle_finder_img = None
+    prev_circle = None
 
     # 串流迴圈
     while True:
         # 等待一對匹配的幀: (深度幀與顏色幀)
-        frames = pipeline.wait_for_frames()
+        frames = pipeline.poll_for_frames()
         depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
 
@@ -61,10 +66,14 @@ def read(bag_filename):
         # BGR to RGB
         color_image = color_image[:, :, ::-1]
 
+        # colorize_frame = colorizer.colorize(depth_frame)
+        # colorize_image = np.asanyarray(ddf.get_data())
+        # cv2.imshow("ddf", colorize_image)
+
         # 再深度圖像上應用色彩映射 (圖像必須先轉換為 8 位元像素)
-        scale_alpha = cv2.getTrackbarPos('alpha', 'RealSense')
+        # scale_alpha = cv2.getTrackbarPos('alpha', 'RealSense')
         depth_colormap = cv2.applyColorMap(
-            cv2.convertScaleAbs(depth_image, alpha=(scale_alpha / SCALE)),
+            cv2.convertScaleAbs(depth_image, alpha=(DEFAULT_SCALE / SCALE)),
             cv2.COLORMAP_OCEAN
         )
         depth_colormap_dim = depth_colormap.shape
@@ -72,9 +81,10 @@ def read(bag_filename):
 
         # 圖片轉為單通道
         circle_image = cv2.cvtColor(depth_colormap, cv2.COLOR_BGR2GRAY)
+        _, gray_image = cv2.threshold(circle_image, 127, 255, cv2.THRESH_TOZERO)
         # 霍夫找圓形
-        circles = cv2.HoughCircles(circle_image, cv2.HOUGH_GRADIENT, 1, 100,
-                                   param1=60, param2=30, minRadius=60, maxRadius=120)
+        circles = cv2.HoughCircles(gray_image, cv2.HOUGH_GRADIENT, 1, 100,
+                                   param1=70, param2=30, minRadius=65, maxRadius=120)
 
         # 如果沒有尋找到圓形的圖片，放置預設圖片
         if circle_finder_img is None:
@@ -95,7 +105,9 @@ def read(bag_filename):
                 interpolation=cv2.INTER_AREA
             )
 
-            # 如果找到圓形
+            mask = np.zeros(MASK_SIZE, dtype=resized_color_image.dtype)
+
+            # # 如果找到圓形
             if circles is not None:
                 circles = np.uint16(np.around(circles))
                 circle_image_map = np.array(depth_colormap)
@@ -103,14 +115,48 @@ def read(bag_filename):
 
                 # 繪製圓形到圖片上
                 for c in circles[0, :]:
-                    cv2.circle(circle_image_map, (c[0], c[1]), c[2], (0, 255, 0), 2)
-                    cv2.circle(circle_image_map, (c[0], c[1]), 2, (0, 0, 255), 3)
-                    cv2.circle(circle_image, (c[0], c[1]), c[2], (0, 255, 0), 2)
-                    cv2.circle(circle_image, (c[0], c[1]), 2, (0, 0, 255), 3)
+                    if prev_circle is None:
+                        prev_circle = (c[0], c[1], c[2])
+
+                    distance = math.sqrt(
+                        math.pow(
+                            abs(max(prev_circle[0], c[0]) - min(prev_circle[0], c[0])), 2) +
+                        math.pow(
+                            abs(max(prev_circle[1], c[1]) - min(prev_circle[1], c[1])), 2))
+
+                    cir = c
+                    if distance > 10:
+                        cir = prev_circle
+
+                    cv2.circle(circle_image_map, (cir[0], cir[1]), cir[2], (0, 255, 0), 2)
+                    cv2.circle(circle_image_map, (cir[0], cir[1]), 2, (0, 0, 255), 3)
+                    cv2.circle(circle_image, (cir[0], cir[1]), cir[2], (0, 255, 0), 2)
+                    cv2.circle(circle_image, (cir[0], cir[1]), 2, (0, 0, 255), 3)
+                    cv2.putText(circle_image_map, str(cir[2]), (cir[0], cir[1]), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                                (255, 0, 0), 1, cv2.LINE_AA)
+
+                    prev_circle = (cir[0], cir[1], cir[2])
 
                 circle_finder_img = circle_image
                 circle_finder_map_img = circle_image_map
 
+            if prev_circle is not None:
+                center = (prev_circle[1], prev_circle[0])
+                anchor_left_top = (int(center[0] - (MASK_SIZE[0] / 2)), int(center[1] - (MASK_SIZE[1] / 2)))
+                image_size = resized_color_image.shape
+                for y in range(MASK_SIZE[0]):
+                    for x in range(MASK_SIZE[1]):
+                        py = anchor_left_top[0] + y
+                        px = anchor_left_top[1] + x
+
+                        if px < 0 or py < 0 or py >= image_size[0] or px >= image_size[1]:
+                            continue
+
+                        mask[y][x] = resized_color_image[py][px]
+
+                cv2.imshow("crop", mask)
+
+        # #
         # 堆疊圖片為四格
         images_0 = np.hstack((resized_color_image, depth_colormap))
         images_1 = np.hstack((circle_finder_img, circle_finder_map_img))
@@ -128,5 +174,5 @@ def read(bag_filename):
 
 
 if __name__ == '__main__':
-    bag_file = os.path.join(RESOURCES_LIVER_REALSENSE_DIR, '20210924_095222.bag')
+    bag_file = os.path.join(RESOURCES_LIVER_REALSENSE_DIR, '20210924_101338.bag')
     read(bag_file)
